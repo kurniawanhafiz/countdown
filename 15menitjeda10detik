@@ -1,0 +1,392 @@
+Option Explicit
+
+' =============================================
+' WINDOWS API TIMER - SUPPORT 32-BIT DAN 64-BIT
+' =============================================
+#If VBA7 Then
+
+    Private Declare PtrSafe Function SetTimer Lib "user32" ( _
+        ByVal hWnd As LongPtr, _
+        ByVal nIDEvent As LongPtr, _
+        ByVal uElapse As Long, _
+        ByVal lpTimerFunc As LongPtr) As LongPtr
+
+    Private Declare PtrSafe Function KillTimer Lib "user32" ( _
+        ByVal hWnd As LongPtr, _
+        ByVal uIDEvent As LongPtr) As Long
+
+    Private gTimerID As LongPtr
+
+#Else
+
+    Private Declare Function SetTimer Lib "user32" ( _
+        ByVal hWnd As Long, _
+        ByVal nIDEvent As Long, _
+        ByVal uElapse As Long, _
+        ByVal lpTimerFunc As Long) As Long
+
+    Private Declare Function KillTimer Lib "user32" ( _
+        ByVal hWnd As Long, _
+        ByVal uIDEvent As Long) As Long
+
+    Private gTimerID As Long
+
+#End If
+
+
+' =============================================
+' PENGATURAN COUNTDOWN
+' =============================================
+
+Private gStartTime As Date
+Private gDelayUntil As Date
+
+Private Const TOTAL_SECONDS As Long = 900
+Private Const START_DELAY_SECONDS As Long = 10
+Private Const TIMER_SHAPE_NAME As String = "Countdown15Timer"
+
+
+' =============================================
+' MEMULAI COUNTDOWN 15 MENIT
+' DENGAN JEDA AWAL 10 DETIK
+' =============================================
+
+Public Sub Start15MinuteCountdown()
+
+    Dim sld As Slide
+    Dim shp As Shape
+    Dim slideW As Single
+
+    ' Hentikan timer lama jika masih berjalan
+    Stop15MinuteCountdown
+
+    slideW = ActivePresentation.PageSetup.SlideWidth
+
+    ' Buat timer pada setiap slide
+    For Each sld In ActivePresentation.Slides
+
+        Set shp = Nothing
+
+        On Error Resume Next
+        Set shp = sld.Shapes(TIMER_SHAPE_NAME)
+        On Error GoTo 0
+
+        ' Buat kotak timer jika belum ada
+        If shp Is Nothing Then
+
+            Set shp = sld.Shapes.AddShape( _
+                msoShapeRoundedRectangle, _
+                slideW - 155, 18, 135, 45)
+
+            shp.Name = TIMER_SHAPE_NAME
+
+        End If
+
+        ' Atur posisi dan tampilan timer
+        With shp
+
+            .Left = slideW - 155
+            .Top = 18
+            .Width = 135
+            .Height = 45
+
+            .Fill.ForeColor.RGB = RGB(255, 20, 147)
+            .Line.Visible = msoFalse
+            .ZOrder msoBringToFront
+
+            With .TextFrame
+
+                .VerticalAnchor = msoAnchorMiddle
+
+                .MarginLeft = 2
+                .MarginRight = 2
+                .MarginTop = 0
+                .MarginBottom = 0
+
+                .TextRange.Text = "15:00"
+
+                .TextRange.ParagraphFormat.Alignment = _
+                    ppAlignCenter
+
+                With .TextRange.Font
+
+                    .Name = "Arial"
+                    .Size = 20
+                    .Bold = msoTrue
+                    .Color.RGB = RGB(255, 255, 255)
+
+                End With
+
+            End With
+
+        End With
+
+    Next sld
+
+    ' =========================================
+    ' JADWALKAN MULAI COUNTDOWN SETELAH 10 DETIK
+    ' =========================================
+
+    gStartTime = 0
+
+    gDelayUntil = DateAdd( _
+        "s", START_DELAY_SECONDS, Now)
+
+    ' Jalankan callback setiap 1 detik
+    gTimerID = SetTimer(0, 0, 1000, AddressOf TimerProc)
+
+    If gTimerID = 0 Then
+
+        MsgBox "Gagal menjalankan timer.", vbExclamation
+
+        Stop15MinuteCountdown
+        Exit Sub
+
+    End If
+
+    ' Buka Slide Show langsung
+    ' Countdown baru mulai setelah jeda 10 detik
+    ActivePresentation.SlideShowSettings.Run
+
+End Sub
+
+
+' =============================================
+' MENGHENTIKAN COUNTDOWN
+' =============================================
+
+Public Sub Stop15MinuteCountdown()
+
+    On Error Resume Next
+
+    If gTimerID <> 0 Then
+        KillTimer 0, gTimerID
+    End If
+
+    gTimerID = 0
+    gStartTime = 0
+    gDelayUntil = 0
+
+    On Error GoTo 0
+
+End Sub
+
+
+' =============================================
+' CALLBACK YANG BERJALAN SETIAP DETIK
+' =============================================
+
+#If VBA7 Then
+
+Public Sub TimerProc( _
+    ByVal hWnd As LongPtr, _
+    ByVal uMsg As Long, _
+    ByVal idEvent As LongPtr, _
+    ByVal dwTime As Long)
+
+#Else
+
+Public Sub TimerProc( _
+    ByVal hWnd As Long, _
+    ByVal uMsg As Long, _
+    ByVal idEvent As Long, _
+    ByVal dwTime As Long)
+
+#End If
+
+    On Error GoTo ErrHandler
+
+    ' =========================================
+    ' TUNGGU JEDA AWAL 10 DETIK
+    ' =========================================
+
+    If gStartTime = 0 Then
+
+        ' Tidak ada countdown yang aktif
+        If gDelayUntil = 0 Then Exit Sub
+
+        ' Belum waktunya memulai countdown
+        If Now < gDelayUntil Then Exit Sub
+
+        ' Jeda selesai, mulai countdown
+        ' berdasarkan waktu yang telah dijadwalkan
+        gStartTime = gDelayUntil
+        gDelayUntil = 0
+
+    End If
+
+    ' =========================================
+    ' HITUNG SISA WAKTU
+    ' =========================================
+
+    Dim elapsed As Long
+    Dim remaining As Long
+
+    ' Hitung berdasarkan waktu mulai sebenarnya
+    elapsed = DateDiff("s", gStartTime, Now)
+
+    remaining = TOTAL_SECONDS - elapsed
+
+    If remaining < 0 Then remaining = 0
+
+    ' Perbarui tampilan jika Slide Show aktif
+    ' atau countdown telah mencapai 00:00
+    If Application.SlideShowWindows.Count > 0 _
+       Or remaining = 0 Then
+
+        UpdateTimerShapes remaining
+
+    End If
+
+    ' Hentikan timer ketika waktu habis
+    If remaining = 0 Then
+        Stop15MinuteCountdown
+    End If
+
+    Exit Sub
+
+ErrHandler:
+
+    Stop15MinuteCountdown
+
+End Sub
+
+
+' =============================================
+' MEMPERBARUI TIMER DI SELURUH SLIDE
+' =============================================
+
+Private Sub UpdateTimerShapes( _
+    ByVal remainingSeconds As Long)
+
+    Dim sld As Slide
+    Dim shp As Shape
+    Dim timerText As String
+
+    ' Format angka menjadi MM:SS
+    timerText = _
+        Format$(remainingSeconds \ 60, "00") & ":" & _
+        Format$(remainingSeconds Mod 60, "00")
+
+    For Each sld In ActivePresentation.Slides
+
+        Set shp = Nothing
+
+        On Error Resume Next
+        Set shp = sld.Shapes(TIMER_SHAPE_NAME)
+        On Error GoTo 0
+
+        If Not shp Is Nothing Then
+
+            shp.TextFrame.TextRange.Text = timerText
+
+            ' Merah ketika tersisa 1 menit atau kurang
+            If remainingSeconds <= 60 Then
+
+                shp.Fill.ForeColor.RGB = RGB(180, 40, 40)
+
+            Else
+
+                shp.Fill.ForeColor.RGB = RGB(255, 20, 147)
+
+            End If
+
+        End If
+
+    Next sld
+
+End Sub
+
+
+' =============================================
+' MASUK PRESENTASI LAGI TANPA RESET TIMER
+' =============================================
+
+Public Sub ReenterSlideShow()
+
+    Dim elapsed As Long
+    Dim remaining As Long
+    Dim slideIndex As Long
+    Dim sw As SlideShowWindow
+
+    ' Pastikan countdown aktif atau sedang dalam jeda awal
+    If gTimerID = 0 Or _
+       (gStartTime = 0 And gDelayUntil = 0) Then
+
+        MsgBox _
+            "Countdown belum dimulai atau sudah selesai." & vbCrLf & _
+            "Jalankan Start15MinuteCountdown untuk memulai timer baru.", _
+            vbInformation
+
+        Exit Sub
+
+    End If
+
+    ' =========================================
+    ' HITUNG SISA WAKTU
+    ' TERMASUK JIKA MASIH DALAM JEDA AWAL
+    ' =========================================
+
+    If gStartTime = 0 Then
+
+        If Now < gDelayUntil Then
+
+            ' Jeda belum selesai, tetap tampilkan 15:00
+            remaining = TOTAL_SECONDS
+
+        Else
+
+            ' Jeda selesai saat Slide Show tidak aktif
+            gStartTime = gDelayUntil
+            gDelayUntil = 0
+
+            elapsed = DateDiff("s", gStartTime, Now)
+
+            remaining = TOTAL_SECONDS - elapsed
+
+        End If
+
+    Else
+
+        elapsed = DateDiff("s", gStartTime, Now)
+
+        remaining = TOTAL_SECONDS - elapsed
+
+    End If
+
+    If remaining < 0 Then remaining = 0
+
+    ' Perbarui angka sebelum masuk Slide Show
+    UpdateTimerShapes remaining
+
+    If remaining = 0 Then
+
+        Stop15MinuteCountdown
+
+        MsgBox "Waktu presentasi sudah habis.", vbInformation
+        Exit Sub
+
+    End If
+
+    On Error GoTo ErrHandler
+
+    ' Ambil slide yang sedang dipilih di editor
+    slideIndex = ActiveWindow.View.Slide.SlideIndex
+
+    ' Jalankan kembali presentasi
+    ' tanpa mereset countdown
+    Set sw = ActivePresentation.SlideShowSettings.Run
+
+    ' Kembali ke slide yang sebelumnya dipilih
+    sw.View.GotoSlide slideIndex
+
+    Exit Sub
+
+ErrHandler:
+
+    MsgBox _
+        "Gagal membuka presentasi kembali." & vbCrLf & _
+        "Coba tekan Shift+F5 dari slide yang ingin ditampilkan.", _
+        vbExclamation
+
+End Sub
